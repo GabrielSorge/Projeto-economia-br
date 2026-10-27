@@ -5,14 +5,18 @@ from unittest.mock import MagicMock
 import pandas as pd
 from sqlalchemy import create_engine
 
-from src.load import carregar_valores, obter_ultima_data, testar_conexao
+from src.load import (
+    carregar_valores,
+    obter_ultima_data,
+    testar_conexao as executar_teste_conexao,
+)
 
 
 class TestarConexaoTests(unittest.TestCase):
     def test_runs_simple_query(self):
         engine = create_engine("sqlite+pysqlite:///:memory:")
         try:
-            self.assertEqual(testar_conexao(engine), 1)
+            self.assertEqual(executar_teste_conexao(engine), 1)
         finally:
             engine.dispose()
 
