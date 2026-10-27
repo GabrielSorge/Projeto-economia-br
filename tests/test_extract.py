@@ -29,32 +29,23 @@ class BuscarSerieTests(unittest.TestCase):
         response.raise_for_status.assert_called_once_with()
 
     @patch("src.extract.requests.get")
-    def test_splits_intervals_longer_than_ten_years(self, get):
-        first_response = Mock()
-        first_response.json.return_value = [{"data": "01/01/2010", "valor": "1"}]
-        second_response = Mock()
-        second_response.json.return_value = [{"data": "01/01/2020", "valor": "2"}]
-        get.side_effect = [first_response, second_response]
+    def test_splits_long_intervals_into_one_year_requests(self, get):
+        responses = []
+        for year in range(2010, 2022):
+            response = Mock()
+            response.json.return_value = [{"data": f"01/01/{year}", "valor": str(year)}]
+            responses.append(response)
+        get.side_effect = responses
 
         registros = buscar_serie(432, date(2010, 1, 1), date(2021, 1, 1))
 
-        self.assertEqual([registro["valor"] for registro in registros], ["1", "2"])
-        self.assertEqual(get.call_count, 2)
-        self.assertEqual(
-            [chamada.kwargs["params"] for chamada in get.call_args_list],
-            [
-                {
-                    "formato": "json",
-                    "dataInicial": "01/01/2010",
-                    "dataFinal": "31/12/2019",
-                },
-                {
-                    "formato": "json",
-                    "dataInicial": "01/01/2020",
-                    "dataFinal": "01/01/2021",
-                },
-            ],
-        )
+        self.assertEqual(len(registros), 12)
+        self.assertEqual(get.call_count, 12)
+        params = [chamada.kwargs["params"] for chamada in get.call_args_list]
+        self.assertEqual(params[0]["dataInicial"], "01/01/2010")
+        self.assertEqual(params[0]["dataFinal"], "31/12/2010")
+        self.assertEqual(params[-1]["dataInicial"], "01/01/2021")
+        self.assertEqual(params[-1]["dataFinal"], "01/01/2021")
 
     @patch("src.extract.requests.get")
     def test_returns_empty_list_when_api_has_no_observations(self, get):
@@ -70,6 +61,25 @@ class BuscarSerieTests(unittest.TestCase):
 
         with self.assertRaises(requests.Timeout):
             buscar_serie(11, "01/01/2024", "03/01/2024")
+        self.assertEqual(get.call_count, 3)
+
+    @patch("src.extract.sleep")
+    @patch("src.extract.requests.get")
+    def test_retries_temporary_http_error(self, get, sleep_retry):
+        unavailable = Mock()
+        unavailable.status_code = 502
+        unavailable.raise_for_status.side_effect = requests.HTTPError(
+            "HTTP 502", response=unavailable
+        )
+        successful = Mock()
+        successful.json.return_value = [{"data": "02/01/2024", "valor": "1"}]
+        get.side_effect = [unavailable, successful]
+
+        registros = buscar_serie(11, "01/01/2024", "03/01/2024")
+
+        self.assertEqual(registros, [{"data": "02/01/2024", "valor": "1"}])
+        self.assertEqual(get.call_count, 2)
+        sleep_retry.assert_called_once_with(1)
 
     @patch("src.extract.requests.get")
     def test_propagates_http_errors(self, get):

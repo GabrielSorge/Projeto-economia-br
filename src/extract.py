@@ -1,5 +1,7 @@
 from calendar import monthrange
 from datetime import date, datetime, timedelta
+import logging
+from time import sleep
 from typing import Dict, List, Union
 
 import requests
@@ -7,8 +9,11 @@ import requests
 
 API_URL = "https://api.bcb.gov.br/dados/serie/bcdata.sgs.{codigo}/dados"
 TIMEOUT_SECONDS = 30
-MAX_QUERY_YEARS = 10
+MAX_REQUEST_ATTEMPTS = 3
+RETRYABLE_STATUS_CODES = {429, 502, 503, 504}
+MAX_QUERY_YEARS = 1
 DateInput = Union[str, date, datetime]
+logger = logging.getLogger(__name__)
 
 
 def _parse_date(value: DateInput, field_name: str) -> date:
@@ -34,16 +39,44 @@ def _add_years(value: date, years: int) -> date:
 
 
 def _fetch_block(codigo: str, data_inicial: date, data_final: date) -> List[Dict[str, str]]:
-    response = requests.get(
-        API_URL.format(codigo=codigo),
-        params={
-            "formato": "json",
-            "dataInicial": data_inicial.strftime("%d/%m/%Y"),
-            "dataFinal": data_final.strftime("%d/%m/%Y"),
-        },
-        timeout=TIMEOUT_SECONDS,
-    )
-    response.raise_for_status()
+    for tentativa in range(MAX_REQUEST_ATTEMPTS):
+        try:
+            response = requests.get(
+                API_URL.format(codigo=codigo),
+                params={
+                    "formato": "json",
+                    "dataInicial": data_inicial.strftime("%d/%m/%Y"),
+                    "dataFinal": data_final.strftime("%d/%m/%Y"),
+                },
+                timeout=TIMEOUT_SECONDS,
+            )
+            response.raise_for_status()
+            break
+        except (requests.Timeout, requests.ConnectionError) as exc:
+            if tentativa == MAX_REQUEST_ATTEMPTS - 1:
+                raise
+            logger.warning(
+                "Falha temporária ao consultar série %s; nova tentativa %d/%d: %s",
+                codigo,
+                tentativa + 2,
+                MAX_REQUEST_ATTEMPTS,
+                exc,
+            )
+        except requests.HTTPError as exc:
+            status = exc.response.status_code if exc.response is not None else None
+            if (
+                status not in RETRYABLE_STATUS_CODES
+                or tentativa == MAX_REQUEST_ATTEMPTS - 1
+            ):
+                raise
+            logger.warning(
+                "HTTP %s ao consultar série %s; nova tentativa %d/%d.",
+                status,
+                codigo,
+                tentativa + 2,
+                MAX_REQUEST_ATTEMPTS,
+            )
+        sleep(2**tentativa)
 
     try:
         registros = response.json()
