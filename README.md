@@ -112,3 +112,48 @@ mensal do câmbio e o IPCA mensal, cria gráficos com unidades e produz achados
 descritivos. A correlação é associação estatística, não evidência de causalidade.
 É necessário primeiro carregar as séries no PostgreSQL; sem dados, o notebook
 informa a ausência de observações e ainda executa todas as células.
+
+## Perguntas em linguagem natural (Gemini text-to-SQL)
+
+Crie uma chave no [Google AI Studio](https://aistudio.google.com/apikey) e
+configure `GEMINI_API_KEY` no `.env` (não compartilhe nem versione a chave).
+Preencha também as duas senhas PostgreSQL vazias do `.env.example` antes de
+iniciar os serviços. As perguntas e até 20 linhas de resultados são enviadas ao
+Google para gerar a resposta; não use este fluxo com informações confidenciais.
+O exemplo usa `GEMINI_MODEL=gemini-2.5-flash`; modelos e cotas do nível gratuito
+podem mudar conforme a disponibilidade do Google. A chave é enviada no cabeçalho
+da requisição, não na URL.
+
+O serviço `db-setup` cria/atualiza a role `POSTGRES_READONLY_USER` com a senha
+`POSTGRES_READONLY_PASSWORD` e concede `SELECT` somente às três views analíticas.
+O `docker compose up` executa essa configuração antes do pipeline. A aplicação
+text-to-SQL usa exclusivamente essa credencial; o pipeline de carga mantém a
+credencial de escrita.
+
+Instale as dependências e execute uma pergunta:
+
+```powershell
+python -m pip install -r requirements.txt
+python -m src.text_to_sql "Qual foi o juro real médio em 2023?"
+```
+
+O prompt informa as views, colunas, unidades e um exemplo de consulta. O SQL
+gerado é analisado antes da execução: apenas uma instrução `SELECT`, somente
+nas views analíticas permitidas, funções em lista de permissões e até 100 linhas.
+Além disso, a conexão usa uma transação PostgreSQL explicitamente somente leitura,
+com timeout de 5 segundos. Em caso de erro SQL, uma única tentativa de correção
+é solicitada ao Gemini. A resposta final recebe somente a pergunta, o SQL e até
+20 linhas retornadas; não recebe credenciais.
+
+Perguntas fixas de teste:
+
+| Pergunta | View/coluna usada | Verificação |
+|---|---|---|
+| Qual foi o juro real médio em 2023? | `vw_juro_real.juro_real_pct` | Média entre 2023-01-01 (inclusive) e 2024-01-01 (exclusive), em % a.a. |
+| Qual foi a maior inflação acumulada em 12 meses? | `vw_ipca_12_meses.inflacao_12_meses_pct` | Máximo no período carregado, em %. |
+| Qual foi o câmbio médio em 2023? | `vw_analise_mensal.cambio_medio_brl_por_usd` | Média entre as datas do período, em BRL/USD. |
+
+Rode `python -m unittest discover -s tests` para validar consultas esperadas,
+tentativas de escrita, acesso a tabelas fora da lista, limite de linhas e
+tratamento de erro. Os valores retornados dependem das séries efetivamente
+carregadas no PostgreSQL.
