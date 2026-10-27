@@ -217,13 +217,3 @@ testes; nenhuma chave ou chamada paga é necessária para rodá-los.
 O histórico atual contém commits separados para configuração inicial, extração,
 testes, análise e text-to-SQL. Não reescreva commits publicados para melhorar
 mensagens antigas; mantenha mensagens concisas e específicas nos próximos commits.
-
-### Rascunho opcional para LinkedIn
-
-> Concluí um projeto de dados econômicos do Brasil com Python, PostgreSQL e Docker.
-> O pipeline consulta séries do Banco Central, faz carga incremental com upsert e
-> prepara análises de inflação, juros e câmbio. Também experimentei text-to-SQL
-> com Gemini, restringindo as consultas a views e a um usuário PostgreSQL somente
-> leitura. Aprendi na prática sobre qualidade de dados, idempotência, SQL analítico
-> e limites de correlação. O próximo passo é ampliar a validação com dados
-> históricos e documentar os resultados reais. #Python #Dados #PostgreSQL #IA
