@@ -1,143 +1,178 @@
-# Economia BR: séries, análises e perguntas com IA
+# Economia BR
 
 [![CI](https://github.com/GabrielSorge/Projeto-economia-br/actions/workflows/ci.yml/badge.svg)](https://github.com/GabrielSorge/Projeto-economia-br/actions/workflows/ci.yml)
 
-Pipeline de dados econômicos brasileiros que extrai séries do Banco Central,
-transforma e persiste observações em PostgreSQL, calcula métricas de inflação e
-juros e permite consultá-las em português usando Gemini text-to-SQL.
+Pipeline de dados econômicos brasileiros que coleta séries do Banco Central,
+organiza observações no PostgreSQL e disponibiliza análises em SQL, notebook e
+linguagem natural.
 
-> **Estado dos dados:** os resultados dependem da carga SGS no banco local. O
-> gráfico deste README usa referências oficiais publicadas para 2023 e está
-> explicitamente identificado como referência, não como resultado do banco.
+O projeto demonstra um fluxo de engenharia de dados de ponta a ponta: extração
+de API, transformação com Python e Pandas, carga incremental, modelagem em SQL,
+testes automatizados e consultas com acesso somente leitura.
 
-## Problema e solução
+> **Dados:** as consultas e análises dependem de uma carga executada no banco
+> local. O gráfico de referência abaixo usa dados oficiais publicados pelo IBGE
+> para 2023; não representa uma execução do pipeline.
 
-Dados de inflação, juros e câmbio estão disponíveis em séries diferentes e não
-são diretamente comparáveis. Este projeto automatiza a extração e carga
-incremental, consolida as métricas em views SQL e oferece uma interface
-experimental de perguntas em linguagem natural, restrita a consultas de leitura.
+## Visão geral
 
 ```mermaid
 flowchart LR
-    SGS[API SGS do Banco Central] -->|HTTP/JSON| Extract[Extração anual]
-    Extract --> Transform[Limpeza e tipagem com Pandas]
-    Transform -->|upsert| DB[(PostgreSQL + volume persistente)]
-    DB --> Views[Views SQL de inflação, juros e câmbio]
+    SGS[API SGS do Banco Central] -->|HTTP/JSON| Extracao[Extração por série]
+    Extracao --> Transformacao[Validação e tipagem com Pandas]
+    Transformacao -->|Upsert| Banco[(PostgreSQL)]
+    Banco --> Views[Views SQL de inflação, juros e câmbio]
     Views --> Notebook[Notebook de análise]
     Pergunta[ pergunta em português ] --> Gemini[Gemini API]
-    Gemini -->|SELECT validado| ReadOnly[Usuário PostgreSQL somente leitura]
-    ReadOnly --> Views
-    Views -->|linhas limitadas| Gemini
+    Gemini -->|SQL gerado| Validacao[Validação com SQLGlot]
+    Validacao -->|Somente leitura| Views
+    Views -->|Resultado limitado| Gemini
     Gemini --> Resposta[Resposta em português]
 ```
 
-## Stack
+### O que o projeto faz
 
-- Python 3.12; `requests`, Pandas e NumPy para extração e transformação.
-- PostgreSQL 16 em Docker Compose, SQLAlchemy e psycopg2.
-- SQL para persistência e views; Jupyter e Matplotlib para análise.
-- Google Gemini API para geração e explicação de consultas; SQLGlot para validar SQL.
-- pytest para os testes de transformação e da aplicação.
+- Consulta séries SGS do Banco Central com requisições HTTP e valida as respostas.
+- Limpa, tipa e deduplica observações com Pandas antes da carga.
+- Carrega dados no PostgreSQL com upsert e processamento incremental.
+- Calcula métricas mensais em views SQL, mantendo as observações originais na
+  tabela de valores.
+- Permite explorar as métricas em notebook ou fazer perguntas em português com
+  Gemini, usando uma credencial PostgreSQL somente leitura.
+- Isola falhas por série, registra erros e encerra com status diferente de zero
+  se alguma série não puder ser processada.
 
-## Começar no Windows
+## Séries e métricas
 
-Pré-requisitos: Docker Desktop com o engine Linux iniciado, Python 3.12 e
-PowerShell. O setup local e a execução de um teste devem levar alguns minutos;
-a primeira extração depende da disponibilidade e velocidade da API do BCB.
+Os códigos, descrições, unidades e periodicidades abaixo foram conferidos no
+SGS. A seleção padrão do pipeline é `432,11,433,1`.
 
-Clone o repositório e entre na pasta:
+| Código | Série | Unidade | Periodicidade |
+|---:|---|---|:---:|
+| 432 | Meta Selic definida pelo Copom | `% a.a.` | Diária |
+| 11 | Taxa de juros - Selic | `% a.d.` | Diária |
+| 12 | Taxa de juros - CDI | `% a.d.` | Diária |
+| 433 | IPCA | Variação percentual mensal | Mensal |
+| 1 | Câmbio - dólar americano (venda) | `u.m.c./US$` | Diária |
+
+A série 12 representa o CDI diário, não uma taxa anual. Por isso, a view
+`vw_juro_real` usa a Meta Selic anual da série 432. A taxa real é calculada pela
+equação de Fisher com a última observação da Meta Selic disponível em cada mês e
+a inflação acumulada em 12 meses. É uma aproximação ex-post, não uma expectativa
+de mercado.
+
+As principais views são:
+
+- `vw_ipca_12_meses`: composição geométrica das 12 variações mensais do IPCA.
+- `vw_juro_real`: Meta Selic anual, inflação acumulada em 12 meses e juro real.
+- `vw_analise_mensal`: câmbio médio, variação mensal do câmbio, IPCA mensal e
+  juro real.
+
+A agregação mensal é feita nas views SQL (ELT: os dados são extraídos e
+carregados antes de serem transformados no banco). A correlação entre câmbio e
+IPCA é descritiva e não demonstra causalidade.
+
+## Tecnologias
+
+- Python 3.12, Pandas, NumPy e Requests.
+- PostgreSQL 16, SQLAlchemy e psycopg2.
+- Docker Compose para os serviços locais.
+- SQLGlot para validar as consultas text-to-SQL.
+- Gemini API para geração de consultas e respostas em linguagem natural.
+- pytest e GitHub Actions para testes e integração contínua.
+
+## Executar localmente
+
+Instruções para Windows, PowerShell e Docker Desktop com o engine Linux ativo.
+
+### 1. Clonar e instalar dependências
 
 ```powershell
 git clone https://github.com/GabrielSorge/Projeto-economia-br.git
 Set-Location Projeto-economia-br
-```
 
-### 1. Instalar dependências
-
-Na raiz do repositório:
-
-```powershell
 py -3.12 -m venv .venv
 .\.venv\Scripts\Activate.ps1
 python -m pip install -r requirements-dev.txt
 ```
 
-Se a ativação da venv estiver bloqueada pela política do PowerShell, execute
-`.\.venv\Scripts\python.exe` no lugar de `python`.
+Se a ativação do ambiente virtual estiver bloqueada pela política do PowerShell,
+use `.\.venv\Scripts\python.exe` no lugar de `python`.
 
-### 2. Configurar ambiente local
+### 2. Configurar variáveis de ambiente
 
 ```powershell
 Copy-Item .env.example .env
 ```
 
-Abra `.env` e preencha `POSTGRES_PASSWORD` e
-`POSTGRES_READONLY_PASSWORD` com senhas locais diferentes. Gere uma senha aleatória
-com:
+No arquivo `.env`, defina `POSTGRES_PASSWORD` e
+`POSTGRES_READONLY_PASSWORD` com senhas locais diferentes. Para gerar uma senha:
 
 ```powershell
 python -c "import secrets; print(secrets.token_urlsafe(24))"
 ```
 
-Para a integração Gemini, crie uma chave no
-[Google AI Studio](https://aistudio.google.com/apikey) e preencha `GEMINI_API_KEY`.
-Sem a chave, o pipeline e o notebook continuam disponíveis, mas as perguntas
-em linguagem natural ficam desabilitadas. Nunca envie `.env` ou a chave para o Git.
+As perguntas em linguagem natural também exigem uma chave do
+[Google AI Studio](https://aistudio.google.com/apikey), definida em
+`GEMINI_API_KEY`. Essa chave é opcional para executar o pipeline e o notebook.
+Não compartilhe nem versione o arquivo `.env`.
 
-### 3. Subir PostgreSQL e usuário de leitura
+### 3. Iniciar o banco
 
 ```powershell
 docker compose up -d postgres db-setup
 docker compose ps
 ```
 
-O healthcheck espera o PostgreSQL ficar pronto. `db-setup` cria/atualiza o usuário
-de leitura e libera `SELECT` somente nas views de análise. Os dados ficam no
-volume nomeado `postgres_data`.
+O Compose inicia o PostgreSQL, aplica os scripts SQL e configura a credencial
+de leitura usada pela interface text-to-SQL. Os dados são armazenados no volume
+persistente `postgres_data`.
 
-### 4. Executar pipeline e verificar
+### 4. Executar a carga
 
 ```powershell
-docker compose up --build
+docker compose up --build pipeline
 ```
 
-O pipeline extrai por padrão as séries `432,11,433,1`, desde `01/01/2020`.
-Configure `SERIES_CODES` e `DATA_INICIAL` em `.env` para reduzir o primeiro teste
-ou escolher outro período. A API SGS pode estar indisponível ou limitar consultas;
-nesse caso, os erros aparecem nos logs e uma nova tentativa pode ser feita com o
-mesmo comando. O upsert permite executar novamente sem duplicar observações.
+Por padrão, o pipeline consulta as séries `432,11,433,1` desde `01/01/2020`.
+Ajuste `SERIES_CODES` e `DATA_INICIAL` no `.env` para escolher outras séries ou
+reduzir o período inicial.
 
-Confira o estado e os logs:
+O processamento é incremental: a próxima consulta começa na data mais recente já
+carregada, inclusive, para permitir a atualização de observações revisadas. O
+upsert insere ou atualiza registros pela chave `(codigo, data)`, evitando
+duplicatas em novas execuções.
+
+Confira o resultado:
 
 ```powershell
-docker compose ps
 docker compose logs pipeline
+docker compose ps
 ```
 
-O container `pipeline` termina após completar a carga; isso é esperado. Para
-executá-lo novamente, use `docker compose run --build --rm pipeline`.
-
-### 5. Executar testes
+O container termina ao concluir a carga. Para executá-la novamente:
 
 ```powershell
-python -m pytest
+docker compose run --build --rm pipeline
 ```
 
-## Executar análises
+O log final apresenta quantas séries tiveram sucesso ou falha e quantas linhas
+foram carregadas. Se alguma série falhar, o processo retorna código diferente de
+zero para que Docker e CI sinalizem a execução.
 
-Abra `notebooks/analise.ipynb` no VS Code/Jupyter e execute as células em ordem.
-O notebook aplica `sql/02_views.sql`, consulta as views no PostgreSQL, compara
-o IPCA acumulado de 2023 com a referência IBGE de 4,62%, calcula a correlação
-entre a variação mensal do câmbio e o IPCA mensal, e desenha gráficos rotulados.
-Sem histórico carregado, as consultas ficam vazias e o notebook explica a
-limitação em vez de inventar resultados.
+## Análises no notebook
 
-### Referência oficial do IPCA mensal — 2023
+Abra [`notebooks/analise.ipynb`](notebooks/analise.ipynb) no VS Code ou Jupyter e
+execute as células em ordem. O notebook aplica as views SQL, consulta os dados
+no PostgreSQL e apresenta as métricas e gráficos. A comparação do IPCA de
+dezembro de 2023 com os 4,62% publicados pelo IBGE só é concluída quando há dados
+carregados para o período.
 
-O gráfico abaixo mostra as taxas mensais oficiais de 2023. A composição
-geométrica dos 12 valores resulta em 4,62111%, que arredonda para os 4,62%
-publicados pelo IBGE. É uma validação de referência da fórmula, não uma captura
-de uma execução com dados do banco local.
+### Referência oficial do IPCA de 2023
+
+O gráfico apresenta taxas mensais oficiais de 2023. A composição geométrica dos
+12 valores resulta em 4,62111%, que arredonda para os 4,62% publicados pelo
+IBGE. É uma referência para a fórmula, não um resultado do banco local.
 
 ![IPCA mensal oficial de 2023 e acumulado composto](assets/ipca-mensal-2023.png)
 
@@ -145,88 +180,60 @@ Para regenerar o gráfico: `python scripts/gerar_grafico_ipca_referencia.py`.
 
 Fonte: [IBGE — IPCA de dezembro de 2023 e resultado anual](https://agenciadenoticias.ibge.gov.br/agencia-sala-de-imprensa/2013-agencia-de-noticias/releases/38984-ipca-vai-a-0-56-em-dezembro-e-fecha-o-ano-em-4-62).
 
-## Perguntar aos dados com Gemini
+## Perguntas em linguagem natural
 
-Com `.env` configurado, PostgreSQL ativo, role de leitura criada e séries
-carregadas:
+Com o PostgreSQL ativo, as séries carregadas e `GEMINI_API_KEY` definida:
 
 ```powershell
 python -m src.text_to_sql "Qual foi o juro real médio em 2023?"
 ```
 
-O prompt fornece à IA as colunas, unidades e um exemplo. Antes da execução, a
-consulta precisa passar por estas barreiras:
+O sistema usa o Gemini para gerar SQL PostgreSQL e explicar o resultado. Antes
+da execução, a consulta passa por validações:
 
-- Uma única instrução `SELECT`, validada pelo parser SQLGlot.
-- Somente as views `vw_ipca_12_meses`, `vw_juro_real` e `vw_analise_mensal`.
-- Funções permitidas, máximo de 100 linhas e timeout de 5 segundos.
-- Transação PostgreSQL explicitamente somente leitura e credencial sem acesso às
-  tabelas-base ou escrita.
-- No máximo uma tentativa de correção quando o PostgreSQL rejeita o SQL.
+- Apenas uma instrução `SELECT` sobre as views de análise autorizadas.
+- Lista de funções permitidas e limite de 100 linhas.
+- Transação PostgreSQL somente leitura e timeout de cinco segundos.
+- No máximo uma tentativa de correção quando o banco rejeita a consulta.
 
-A pergunta, a consulta e no máximo 20 linhas de resultado são enviadas ao Google
-para produzir a resposta. Não use com informações confidenciais. A resposta
-depende dos dados presentes no banco; sem carga de dados, não há valor real a
-responder. Não há captura de uma resposta Gemini incluída: ela requer uma chave
-local e dados carregados, e não deve ser simulada como resultado real.
+A pergunta, o SQL e até 20 linhas de resultado são enviados ao Google para gerar
+a resposta. Não use essa funcionalidade com informações confidenciais. Sem
+chave de API ou dados carregados, não há resposta baseada em dados reais.
 
-### Perguntas de referência
+## Testes e integração contínua
 
-| Pergunta | View/colunas | Interpretação |
-|---|---|---|
-| Qual foi o juro real médio em 2023? | `vw_juro_real.juro_real_pct` | Média de janeiro a dezembro, em % a.a. |
-| Qual foi a maior inflação acumulada em 12 meses? | `vw_ipca_12_meses.inflacao_12_meses_pct` | Máximo no intervalo disponível, em %. |
-| Qual foi o câmbio médio em 2023? | `vw_analise_mensal.cambio_medio_brl_por_usd` | Média em BRL por USD. |
+Execute os testes locais com:
 
-## Esquema e convenções
+```powershell
+python -m pytest
+```
 
-- `series_catalogo`: código SGS e descrição.
-- `series_valores`: código, data e valor; chave primária composta `(codigo, data)`.
-- Série 433: IPCA, variação percentual mensal.
-- Série 432: Meta Selic definida pelo Copom, percentual ao ano (`% a.a.`), observada diariamente.
-- Série 11: Selic, percentual ao dia (`% a.d.`).
-- Série 12: CDI, percentual ao dia (`% a.d.`); não é usada como taxa anual no juro real.
-- Série 1: dólar americano (venda), unidade monetária corrente por dólar (`u.m.c./US$`).
-- `vw_ipca_12_meses`: produto composto de 12 variações mensais do IPCA.
-- `vw_juro_real`: equação de Fisher com a última observação mensal da Meta Selic
-  anual da série 432 e a inflação acumulada em 12 meses. É uma aproximação
-  ex-post, não a taxa real esperada.
-- `vw_analise_mensal`: câmbio médio e variação mensal, IPCA e juro real.
+O GitHub Actions executa os testes em push e pull request usando Python 3.12.
+O workflow também inicia um PostgreSQL temporário para validar as views com
+dados sintéticos. Localmente, o teste de integração é ignorado se
+`TEST_DATABASE_URL` não estiver definida. As chamadas à Gemini são simuladas;
+não é necessária uma chave de API para a suíte.
 
-A agregação mensal segue uma etapa ELT (extrair e carregar os dados antes de
-transformá-los no banco): neste projeto, as médias mensais são calculadas nas
-views SQL. `padronizar_periodicidade_mensal` permanece como função independente,
-coberta por testes, mas não é chamada pelo pipeline.
+## Estrutura do repositório
 
-A relação entre câmbio e inflação é uma correlação descritiva. Correlação não
-prova causalidade e não controla por defasagens, política monetária ou choques
-externos.
+```text
+.
+├── .github/workflows/ci.yml   # Testes automatizados
+├── ia/perguntas.py            # Interface de perguntas em linguagem natural
+├── notebooks/analise.ipynb    # Análises e visualizações
+├── sql/                       # Tabelas, views e permissões
+├── src/                       # Extração, transformação, carga e aplicação
+├── tests/                     # Testes unitários e de integração
+├── docker-compose.yml         # PostgreSQL e pipeline
+└── requirements*.txt          # Dependências Python
+```
 
 ## Limitações e segurança
 
-- A primeira carga precisa consultar a API externa do BCB e pode demorar ou falhar
-  por timeout, limites do endpoint ou conectividade.
-- A carga incremental começa na data máxima existente e reconsulta essa data
-  para atualizar observações revisadas.
-- Scripts em `docker-entrypoint-initdb.d` só rodam na criação inicial do volume.
-  `db-setup` é executado pelo Compose para atualizar permissões.
-- A chave Gemini é usada localmente pelo cliente e nunca deve ser commitada.
-  No nível gratuito, limites, modelos disponíveis e tratamento dos dados enviados
-  seguem as condições atuais do Google.
-- O pipeline precisa de credencial de escrita; o text-to-SQL usa uma credencial
-  distinta, sem escrita.
-
-## Testes
-
-`python -m pytest` executa os testes de transformação, carga, orquestração,
-validação de SQL e tratamento de erros. As chamadas à Gemini são simuladas nos
-testes; nenhuma chave ou chamada paga é necessária para rodá-los.
-A CI também sobe um PostgreSQL temporário para conferir as views com valores
-sintéticos. Localmente, esse teste é ignorado se `TEST_DATABASE_URL` não estiver
-definida.
-
-## Histórico e divulgação
-
-O histórico atual contém commits separados para configuração inicial, extração,
-testes, análise e text-to-SQL. Não reescreva commits publicados para melhorar
-mensagens antigas; mantenha mensagens concisas e específicas nos próximos commits.
+- A disponibilidade e os limites da API SGS podem afetar a primeira carga.
+- O pipeline precisa de credencial de escrita; as perguntas text-to-SQL usam
+  uma credencial separada, com acesso de leitura somente às views.
+- A chave Gemini deve permanecer local e não ser commitada. O uso da API está
+  sujeito a limites, modelos disponíveis e políticas do Google.
+- A análise da relação entre câmbio e inflação é descritiva; correlação não
+  estabelece causalidade.
