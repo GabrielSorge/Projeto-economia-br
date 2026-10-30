@@ -53,6 +53,13 @@ class ValidarSQLTests(unittest.TestCase):
         self.assertIn("WITH juros AS", query)
         self.assertIn("LIMIT 100", query)
 
+    def test_allows_known_sqlglot_functions(self):
+        query = validar_sql(
+            "SELECT ROUND(AVG(juro_real_pct), 2) FROM vw_juro_real"
+        )
+
+        self.assertIn("ROUND(CAST(AVG(juro_real_pct)", query)
+
     def test_caps_requested_limit(self):
         query = validar_sql("SELECT data FROM vw_juro_real LIMIT 10000")
 
@@ -75,6 +82,7 @@ class ValidarSQLTests(unittest.TestCase):
             "SELECT * FROM information_schema.tables",
             "SELECT * FROM outro_esquema.vw_juro_real",
             "SELECT pg_sleep(10) FROM vw_juro_real",
+            "SELECT set_config('statement_timeout', '0', false) FROM vw_juro_real",
         )
         for sql in proibidas:
             with self.subTest(sql=sql), self.assertRaises(ConsultaInseguraError):
@@ -112,9 +120,9 @@ class ExecucaoSomenteLeituraTests(unittest.TestCase):
 
 
 class PerguntarTests(unittest.TestCase):
-    @patch("src.text_to_sql._gemini_text")
-    @patch("src.text_to_sql.executar_sql_leitura", return_value=[{"media_pct": 5.2}])
-    @patch("src.text_to_sql.gerar_sql")
+    @patch("ia.perguntas._gemini_text")
+    @patch("ia.perguntas.executar_sql_leitura", return_value=[{"media_pct": 5.2}])
+    @patch("ia.perguntas.gerar_sql")
     def test_generates_query_executes_it_and_explains_results(
         self, gerar_sql, executar, gemini
     ):
@@ -132,9 +140,9 @@ class PerguntarTests(unittest.TestCase):
         self.assertEqual(gemini.call_count, 1)
         engine.dispose.assert_not_called()
 
-    @patch("src.text_to_sql._gemini_text")
-    @patch("src.text_to_sql.executar_sql_leitura")
-    @patch("src.text_to_sql.gerar_sql")
+    @patch("ia.perguntas._gemini_text")
+    @patch("ia.perguntas.executar_sql_leitura")
+    @patch("ia.perguntas.gerar_sql")
     def test_retries_once_when_database_rejects_generated_sql(
         self, gerar_sql, executar, gemini
     ):

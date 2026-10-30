@@ -8,6 +8,30 @@ from src.config import criar_engine
 from src.transform import limpar_serie
 
 
+DESCRICOES_SERIES: dict[int, dict[str, str]] = {
+    1: {
+        "descricao": "Taxa de câmbio - Livre - Dólar americano (venda) - diário",
+        "unidade": "u.m.c./US$",
+    },
+    11: {
+        "descricao": "Taxa de juros - Selic",
+        "unidade": "% a.d.",
+    },
+    12: {
+        "descricao": "Taxa de juros - CDI",
+        "unidade": "% a.d.",
+    },
+    432: {
+        "descricao": "Taxa de juros - Meta Selic definida pelo Copom",
+        "unidade": "% a.a.",
+    },
+    433: {
+        "descricao": "Índice nacional de preços ao consumidor-amplo (IPCA)",
+        "unidade": "Var. % mensal",
+    },
+}
+
+
 def testar_conexao(engine: Engine | None = None) -> int:
     """Executa uma consulta simples e retorna o resultado."""
     engine_local = engine if engine is not None else criar_engine()
@@ -51,18 +75,25 @@ def carregar_valores(
         for linha in dados.itertuples(index=False)
     ]
     engine_local = engine if engine is not None else criar_engine()
+    serie = DESCRICOES_SERIES.get(codigo)
+    descricao_catalogo = descricao or (
+        f"{serie['descricao']} ({serie['unidade']})"
+        if serie is not None
+        else f"Série SGS {codigo}"
+    )
     with engine_local.begin() as conexao:
         conexao.execute(
             text(
                 """
                 INSERT INTO series_catalogo (codigo, descricao)
                 VALUES (:codigo, :descricao)
-                ON CONFLICT (codigo) DO NOTHING
+                ON CONFLICT (codigo)
+                DO UPDATE SET descricao = EXCLUDED.descricao
                 """
             ),
             {
                 "codigo": codigo,
-                "descricao": descricao or f"Série SGS {codigo}",
+                "descricao": descricao_catalogo,
             },
         )
         if registros:

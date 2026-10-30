@@ -1,5 +1,7 @@
 # Economia BR: séries, análises e perguntas com IA
 
+[![CI](https://github.com/GabrielSorge/Projeto-economia-br/actions/workflows/ci.yml/badge.svg)](https://github.com/GabrielSorge/Projeto-economia-br/actions/workflows/ci.yml)
+
 Pipeline de dados econômicos brasileiros que extrai séries do Banco Central,
 transforma e persiste observações em PostgreSQL, calcula métricas de inflação e
 juros e permite consultá-las em português usando Gemini text-to-SQL.
@@ -99,7 +101,7 @@ volume nomeado `postgres_data`.
 docker compose up --build
 ```
 
-O pipeline extrai por padrão as séries `432,11,12,433,1`, desde `01/01/2020`.
+O pipeline extrai por padrão as séries `432,11,433,1`, desde `01/01/2020`.
 Configure `SERIES_CODES` e `DATA_INICIAL` em `.env` para reduzir o primeiro teste
 ou escolher outro período. A API SGS pode estar indisponível ou limitar consultas;
 nesse caso, os erros aparecem nos logs e uma nova tentativa pode ser feita com o
@@ -180,13 +182,21 @@ local e dados carregados, e não deve ser simulada como resultado real.
 
 - `series_catalogo`: código SGS e descrição.
 - `series_valores`: código, data e valor; chave primária composta `(codigo, data)`.
-- Série 433: IPCA mensal, percentagem.
-- Série 12: Selic anual, percentagem ao ano.
-- Série 1: câmbio, BRL por USD.
+- Série 433: IPCA, variação percentual mensal.
+- Série 432: Meta Selic definida pelo Copom, percentual ao ano (`% a.a.`), observada diariamente.
+- Série 11: Selic, percentual ao dia (`% a.d.`).
+- Série 12: CDI, percentual ao dia (`% a.d.`); não é usada como taxa anual no juro real.
+- Série 1: dólar americano (venda), unidade monetária corrente por dólar (`u.m.c./US$`).
 - `vw_ipca_12_meses`: produto composto de 12 variações mensais do IPCA.
-- `vw_juro_real`: equação de Fisher com a última Selic observada no mês e inflação
-  acumulada. É uma aproximação ex-post, não a taxa real esperada.
+- `vw_juro_real`: equação de Fisher com a última observação mensal da Meta Selic
+  anual da série 432 e a inflação acumulada em 12 meses. É uma aproximação
+  ex-post, não a taxa real esperada.
 - `vw_analise_mensal`: câmbio médio e variação mensal, IPCA e juro real.
+
+A agregação mensal segue uma etapa ELT (extrair e carregar os dados antes de
+transformá-los no banco): neste projeto, as médias mensais são calculadas nas
+views SQL. `padronizar_periodicidade_mensal` permanece como função independente,
+coberta por testes, mas não é chamada pelo pipeline.
 
 A relação entre câmbio e inflação é uma correlação descritiva. Correlação não
 prova causalidade e não controla por defasagens, política monetária ou choques
@@ -211,6 +221,9 @@ externos.
 `python -m pytest` executa os testes de transformação, carga, orquestração,
 validação de SQL e tratamento de erros. As chamadas à Gemini são simuladas nos
 testes; nenhuma chave ou chamada paga é necessária para rodá-los.
+A CI também sobe um PostgreSQL temporário para conferir as views com valores
+sintéticos. Localmente, esse teste é ignorado se `TEST_DATABASE_URL` não estiver
+definida.
 
 ## Histórico e divulgação
 

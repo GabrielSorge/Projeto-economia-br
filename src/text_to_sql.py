@@ -1,5 +1,3 @@
-import json
-import os
 import re
 import sys
 from dataclasses import dataclass
@@ -9,10 +7,7 @@ import requests
 import sqlglot
 from sqlalchemy import text
 from sqlalchemy.engine import Engine
-from sqlalchemy.exc import SQLAlchemyError
 from sqlglot import exp
-
-from src.config import criar_engine_leitura
 
 
 GEMINI_API_URL = "https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
@@ -28,6 +23,7 @@ ALLOWED_VIEWS = {
 ALLOWED_FUNCTIONS = {
     "ABS",
     "AVG",
+    "CAST",
     "COALESCE",
     "COUNT",
     "DATE_TRUNC",
@@ -41,7 +37,7 @@ ALLOWED_FUNCTIONS = {
 
 SCHEMA_DESCRIPTION = """Use somente estas views e colunas:
 - vw_ipca_12_meses(data DATE, inflacao_12_meses_pct DOUBLE PRECISION): IPCA acumulado em 12 meses, em porcentagem.
-- vw_juro_real(data DATE, selic_anual_pct DOUBLE PRECISION, inflacao_12_meses_pct DOUBLE PRECISION, juro_real_pct DOUBLE PRECISION): taxas em porcentagem anual; juro real ex-post calculado pela equacao de Fisher.
+- vw_juro_real(data DATE, selic_anual_pct DOUBLE PRECISION, inflacao_12_meses_pct DOUBLE PRECISION, juro_real_pct DOUBLE PRECISION): selic_anual_pct e a ultima observacao mensal da serie 432 (Meta Selic definida pelo Copom, % a.a.); juro real ex-post calculado pela equacao de Fisher.
 - vw_analise_mensal(data DATE, cambio_medio_brl_por_usd DOUBLE PRECISION, variacao_cambio_mensal_pct DOUBLE PRECISION, ipca_mensal_pct DOUBLE PRECISION, juro_real_pct DOUBLE PRECISION): cambio em BRL por USD e demais taxas em porcentagem.
 Datas sao o primeiro dia do mes. As series podem nao ter dados.
 
@@ -168,9 +164,14 @@ def validar_sql(sql: str, limite: int = MAX_ROWS) -> str:
         if tabela.catalog or (tabela.db and tabela.db.lower() != "public"):
             raise ConsultaInseguraError("Somente objetos do esquema public sao permitidos.")
 
-    for funcao in consulta.find_all(exp.Anonymous):
-        nome = funcao.sql_name().upper()
-        nome = funcao.name.upper()
+    for funcao in consulta.find_all(exp.Func):
+        if isinstance(funcao, (exp.Binary, exp.Unary)):
+            continue
+        nome = (
+            funcao.name.upper()
+            if isinstance(funcao, exp.Anonymous)
+            else funcao.sql_name().upper()
+        )
         if nome not in ALLOWED_FUNCTIONS:
             raise ConsultaInseguraError(f"A funcao SQL '{nome}' nao esta autorizada.")
 
@@ -207,67 +208,10 @@ def perguntar(
     api_key: str | None = None,
     model: str | None = None,
 ) -> ResultadoPergunta:
-    pergunta = pergunta.strip()
-    if not pergunta:
-        raise ValueError("Informe uma pergunta em portugues.")
-    if len(pergunta) > MAX_QUESTION_LENGTH:
-        raise ValueError(
-            f"A pergunta deve ter no maximo {MAX_QUESTION_LENGTH} caracteres."
-        )
+    """Encaminha a pergunta para o módulo de interface em linguagem natural."""
+    from ia.perguntas import perguntar as executar_pergunta
 
-    chave = api_key or os.getenv("GEMINI_API_KEY")
-    if not chave:
-        raise RuntimeError(
-            "Defina GEMINI_API_KEY no arquivo .env com a chave do Google AI Studio."
-        )
-    modelo = model or os.getenv("GEMINI_MODEL", DEFAULT_MODEL)
-    if not re.fullmatch(r"[A-Za-z0-9._-]{1,100}", modelo):
-        raise ValueError("GEMINI_MODEL contem caracteres invalidos.")
-    engine_local = engine if engine is not None else criar_engine_leitura()
-    deve_fechar_engine = engine is None
-
-    try:
-        sql = validar_sql(gerar_sql(pergunta, chave, modelo))
-        try:
-            linhas = executar_sql_leitura(sql, engine_local)
-        except SQLAlchemyError as exc:
-            mensagem_erro = str(getattr(exc, "orig", exc))[:1000]
-            sql = validar_sql(
-                gerar_sql(pergunta, chave, modelo, erro_anterior=mensagem_erro)
-            )
-            try:
-                linhas = executar_sql_leitura(sql, engine_local)
-            except SQLAlchemyError as erro_final:
-                raise RuntimeError(
-                    "A consulta corrigida pelo Gemini tambem falhou: "
-                    f"{getattr(erro_final, 'orig', erro_final)}"
-                ) from erro_final
-
-        contexto_resultado = json.dumps(
-            {
-                "pergunta": pergunta,
-                "sql": sql,
-                "total_linhas": len(linhas),
-                "sem_dados": not any(
-                    valor is not None
-                    for linha in linhas
-                    for valor in linha.values()
-                ),
-                "linhas": linhas[:20],
-            },
-            ensure_ascii=False,
-            default=str,
-        )
-        resposta = _gemini_text(
-            contexto_resultado,
-            ANSWER_SYSTEM_INSTRUCTION,
-            chave,
-            modelo,
-        )
-        return ResultadoPergunta(pergunta, sql, linhas, resposta)
-    finally:
-        if deve_fechar_engine:
-            engine_local.dispose()
+    return executar_pergunta(pergunta, engine, api_key, model)
 
 
 def main() -> None:

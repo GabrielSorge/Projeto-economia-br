@@ -43,7 +43,10 @@ class CarregarValoresTests(unittest.TestCase):
         self.engine.begin.assert_called_once_with()
         chamadas = self.connection.execute.call_args_list
         self.assertEqual(len(chamadas), 2)
-        self.assertIn("ON CONFLICT (codigo) DO NOTHING", str(chamadas[0].args[0]))
+        self.assertIn(
+            "DO UPDATE SET descricao = EXCLUDED.descricao",
+            str(chamadas[0].args[0]),
+        )
         self.assertEqual(
             chamadas[0].args[1], {"codigo": 11, "descricao": "Taxa de teste"}
         )
@@ -69,6 +72,13 @@ class CarregarValoresTests(unittest.TestCase):
 
         self.assertEqual(carregar_valores(dados, 11, self.engine), 0)
         self.connection.execute.assert_called_once()
+        self.assertEqual(
+            self.connection.execute.call_args.args[1],
+            {
+                "codigo": 11,
+                "descricao": "Taxa de juros - Selic (% a.d.)",
+            },
+        )
 
     def test_rejects_rows_for_another_series(self):
         dados = pd.DataFrame(

@@ -38,7 +38,7 @@ WITH selic_mensal AS (
             ORDER BY data DESC
         ) AS ordem
     FROM series_valores
-    WHERE codigo = 12
+    WHERE codigo = 432
 )
 SELECT
     ipca.data,

@@ -44,7 +44,7 @@ services:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Defina POSTGRES_PASSWORD no arquivo .env}
       POSTGRES_HOST: postgres
       POSTGRES_PORT: 5432
-      SERIES_CODES: ${SERIES_CODES:-432,11,12,433,1}
+      SERIES_CODES: ${SERIES_CODES:-432,11,433,1}
       DATA_INICIAL: ${DATA_INICIAL:-01/01/2020}
     depends_on:
       db-setup:
